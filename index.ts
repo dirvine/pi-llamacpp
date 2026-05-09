@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamOpenAICompletions } from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { spawn } from "node:child_process";
@@ -55,8 +55,10 @@ const LLAMACPP_PORT = parseOptionalPort(process.env.LLAMACPP_PORT);
 const PROVIDER_BASE_URL = LLAMACPP_PORT ? apiBaseUrlForPort(LLAMACPP_PORT) : apiBaseUrlForPort(0);
 const API_KEY = process.env.LLAMACPP_API_KEY ?? "llamacpp-local";
 
-const MODEL_REPO = process.env.LLAMACPP_QWEN_REPO ?? "havenoammo/Qwen3.6-35B-A3B-MTP-GGUF";
-const MODEL_REVISION = process.env.LLAMACPP_QWEN_REVISION ?? "main";
+const QWEN_35B_A3B_REPO = process.env.LLAMACPP_QWEN_35B_A3B_REPO ?? process.env.LLAMACPP_QWEN_REPO ?? "havenoammo/Qwen3.6-35B-A3B-MTP-GGUF";
+const QWEN_35B_A3B_REVISION = process.env.LLAMACPP_QWEN_35B_A3B_REVISION ?? process.env.LLAMACPP_QWEN_REVISION ?? "main";
+const QWEN_27B_REPO = process.env.LLAMACPP_QWEN_27B_REPO ?? "froggeric/Qwen3.6-27B-MTP-GGUF";
+const QWEN_27B_REVISION = process.env.LLAMACPP_QWEN_27B_REVISION ?? "main";
 const DEFAULT_CTX_SIZE = Number(process.env.LLAMACPP_CTX_SIZE ?? 262144);
 const DEFAULT_MAX_TOKENS = Number(process.env.LLAMACPP_MAX_TOKENS ?? 65536);
 
@@ -105,6 +107,8 @@ type ModelQuant = "q2" | "q4" | "q8";
 type ManagedModel = {
 	id: string;
 	name: string;
+	repo: string;
+	revision: string;
 	quant: ModelQuant;
 	bits: number;
 	filename: string;
@@ -116,6 +120,8 @@ const MODELS: ManagedModel[] = [
 	{
 		id: "qwen-3.6-2bit",
 		name: "qwen-3.6-2bit",
+		repo: QWEN_35B_A3B_REPO,
+		revision: QWEN_35B_A3B_REVISION,
 		quant: "q2",
 		bits: 2,
 		filename: "Qwen3.6-35B-A3B-MTP-UD-Q2_K_XL.gguf",
@@ -125,6 +131,8 @@ const MODELS: ManagedModel[] = [
 	{
 		id: "qwen-3.6-4bit",
 		name: "qwen-3.6-4bit",
+		repo: QWEN_35B_A3B_REPO,
+		revision: QWEN_35B_A3B_REVISION,
 		quant: "q4",
 		bits: 4,
 		filename: "Qwen3.6-35B-A3B-MTP-UD-Q4_K_XL.gguf",
@@ -134,11 +142,46 @@ const MODELS: ManagedModel[] = [
 	{
 		id: "qwen-3.6-8bit",
 		name: "qwen-3.6-8bit",
+		repo: QWEN_35B_A3B_REPO,
+		revision: QWEN_35B_A3B_REVISION,
 		quant: "q8",
 		bits: 8,
 		filename: "Qwen3.6-35B-A3B-MTP-UD-Q8_K_XL.gguf",
 		size: 39_348_646_304,
 		sha256: "3720209c5729265b0967445e3f4d2d46d6455bc21123958fd4cac203f3277478",
+	},
+	{
+		id: "qwen-3.6-27b-2bit",
+		name: "qwen-3.6-27b-2bit",
+		repo: QWEN_27B_REPO,
+		revision: QWEN_27B_REVISION,
+		quant: "q2",
+		bits: 2,
+		filename: "Qwen3.6-27B-IQ2_M-mtp.gguf",
+		size: 10_455_916_448,
+		sha256: "69c06c105d5e7d8a5ad9c0ead59fbcfdf7e2a7ea7d9338aadfe70fc9b0f133bf",
+	},
+	{
+		id: "qwen-3.6-27b-4bit",
+		name: "qwen-3.6-27b-4bit",
+		repo: QWEN_27B_REPO,
+		revision: QWEN_27B_REVISION,
+		quant: "q4",
+		bits: 4,
+		filename: "Qwen3.6-27B-Q4_K_M-mtp.gguf",
+		size: 16_998_723_232,
+		sha256: "c2275978182b91ec0f0a2e334e37e4fbfc8385eb9b3cdb6d5d4f7e23fce3b557",
+	},
+	{
+		id: "qwen-3.6-27b-8bit",
+		name: "qwen-3.6-27b-8bit",
+		repo: QWEN_27B_REPO,
+		revision: QWEN_27B_REVISION,
+		quant: "q8",
+		bits: 8,
+		filename: "Qwen3.6-27B-Q8_0-mtp.gguf",
+		size: 29_047_086_752,
+		sha256: "15de87dd41f9a05c2b8938c4a7234280a5b148f2ac047b7f80abca548a768b2f",
 	},
 ];
 
@@ -193,6 +236,7 @@ type Component = { render(width: number): string[]; handleInput?(data: string): 
 
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 let startupPromise: Promise<void> | undefined;
+let activeProviderContext: ExtensionContext | undefined;
 let activeSetupChild: ChildProcess | undefined;
 let resolvedRuntimeDir: string | undefined;
 let resolvedRuntimeAsset: RuntimeAsset | undefined;
@@ -1021,11 +1065,11 @@ async function ensureRuntime(onStatus?: StatusCallback): Promise<string> {
 }
 
 function modelCachePath(model: ManagedModel): string {
-	return join(MODEL_DIR, ...MODEL_REPO.split("/"), model.filename);
+	return join(MODEL_DIR, ...model.repo.split("/"), model.filename);
 }
 
 function huggingFaceModelUrl(model: ManagedModel): string {
-	return `https://huggingface.co/${MODEL_REPO}/resolve/${encodeURIComponent(MODEL_REVISION)}/${encodeURIComponent(model.filename)}?download=true`;
+	return `https://huggingface.co/${model.repo}/resolve/${encodeURIComponent(model.revision)}/${encodeURIComponent(model.filename)}?download=true`;
 }
 
 async function isCompleteModelFile(file: string, model: ManagedModel): Promise<boolean> {
@@ -1491,6 +1535,19 @@ function ensureServerManaged(model: ManagedModel, onStatus?: StatusCallback): Pr
 	return startupPromise;
 }
 
+function createStartupStatusCallback(ctx: ExtensionContext | undefined, notify: boolean): StatusCallback {
+	let lastNotification: string | undefined;
+	return (message) => {
+		if (!message) return;
+		void appendLog(`[${new Date().toISOString()}] ${message}\n`).catch(() => {});
+
+		if (!notify || !ctx?.hasUI || message === lastNotification) return;
+		if (/^llama-server starting .*\(\d+s\)$/.test(message)) return;
+		lastNotification = message;
+		ctx.ui.notify(message, "info");
+	};
+}
+
 async function stopServerIfUnused(): Promise<void> {
 	// The watchdog owns lease refcounting and server shutdown. Keep /quit fast:
 	// removing our lease is enough for it to stop llama-server when nobody else uses it.
@@ -1659,9 +1716,11 @@ function streamLlamaCpp(model: Model<any>, context: Context, options?: SimpleStr
 			const managedModel = MODEL_BY_ID.get(model.id);
 			if (!managedModel) throw new Error(`Unknown llama.cpp model: ${model.id}`);
 
-			await ensureServerManaged(managedModel, (message) => {
-				if (message) void appendLog(`[${new Date().toISOString()}] ${message}\n`).catch(() => {});
-			});
+			const alreadyReady = await checkHttpReady(managedModel.id);
+			const status = createStartupStatusCallback(activeProviderContext, !alreadyReady);
+			if (!alreadyReady) status(`preparing llama.cpp (${managedModel.quant})`);
+			await ensureServerManaged(managedModel, status);
+			if (!alreadyReady) status(`llama-server ready (${managedModel.quant})`);
 			const state = await readState();
 			if (!state?.baseUrl || state.modelId !== managedModel.id || !isPidAlive(state.pid)) {
 				throw new Error(`llama-server state is not ready for ${managedModel.id}`);
@@ -1735,14 +1794,28 @@ export default function (pi: ExtensionAPI) {
 	watchdogStarted = false;
 	startupPromise = undefined;
 	activeSetupChild = undefined;
+	activeProviderContext = undefined;
 	resolvedRuntimeDir = undefined;
 	resolvedRuntimeAsset = undefined;
 
 	registerLlamaCppProvider(pi);
 	registerLlamaCppCommand(pi);
 
+	pi.on("session_start", async (_event, ctx) => {
+		activeProviderContext = ctx;
+	});
+
+	pi.on("agent_start", async (_event, ctx) => {
+		if (ctx.model?.provider === PROVIDER_ID) activeProviderContext = ctx;
+	});
+
+	pi.on("turn_start", async (_event, ctx) => {
+		if (ctx.model?.provider === PROVIDER_ID) activeProviderContext = ctx;
+	});
+
 	pi.on("before_provider_request", async (_event, ctx) => {
 		if (ctx.model?.provider !== PROVIDER_ID) return;
+		activeProviderContext = ctx;
 		const model = MODEL_BY_ID.get(ctx.model.id);
 		if (!model) return;
 
@@ -1768,6 +1841,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		activeProviderContext = undefined;
 		runtimeDisposed = true;
 		stopHeartbeat();
 		killActiveSetupChild();

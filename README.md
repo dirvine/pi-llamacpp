@@ -11,12 +11,17 @@ first use, starts `llama-server`, and stops it automatically when pi shuts down.
 
 Currently registered:
 
-- `llamacpp/qwen-3.6-2bit`
-- `llamacpp/qwen-3.6-4bit`
-- `llamacpp/qwen-3.6-8bit`
+- `llamacpp/qwen-3.6-2bit` (35B-A3B)
+- `llamacpp/qwen-3.6-4bit` (35B-A3B)
+- `llamacpp/qwen-3.6-8bit` (35B-A3B)
+- `llamacpp/qwen-3.6-27b-2bit`
+- `llamacpp/qwen-3.6-27b-4bit`
+- `llamacpp/qwen-3.6-27b-8bit`
 
-All are downloaded from
-[`havenoammo/Qwen3.6-35B-A3B-MTP-GGUF`](https://huggingface.co/havenoammo/Qwen3.6-35B-A3B-MTP-GGUF).
+The 35B-A3B models are downloaded from
+[`havenoammo/Qwen3.6-35B-A3B-MTP-GGUF`](https://huggingface.co/havenoammo/Qwen3.6-35B-A3B-MTP-GGUF),
+and the 27B models are downloaded from
+[`froggeric/Qwen3.6-27B-MTP-GGUF`](https://huggingface.co/froggeric/Qwen3.6-27B-MTP-GGUF).
 These files need llama.cpp MTP/NextN support, so the default runtime path builds
 a pinned snapshot of [llama.cpp pull request #22673](https://github.com/ggml-org/llama.cpp/pull/22673)
 instead of using the stock binary release.
@@ -42,7 +47,8 @@ Runtime state is kept under `~/.pi/llamacpp`:
 - `source/`: pinned llama.cpp source snapshots built locally (default: [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673) snapshot for MTP/NextN support)
 - `runtime/`: extracted llama.cpp release archives when `LLAMACPP_RUNTIME_KIND=release`
 - `downloads/`: release archives and resumable `.part` files
-- `models/havenoammo/Qwen3.6-35B-A3B-MTP-GGUF/`: cached GGUF model files
+- `models/havenoammo/Qwen3.6-35B-A3B-MTP-GGUF/`: cached 35B-A3B GGUF model files
+- `models/froggeric/Qwen3.6-27B-MTP-GGUF/`: cached 27B GGUF model files
 - `clients/`: active Pi process leases
 - `server.json`: managed `llama-server` state
 - `log`: download/extract/server/watchdog log
