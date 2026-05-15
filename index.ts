@@ -62,6 +62,8 @@ const QWEN_35B_A3B_REVISION =
 	"44ce525026e7e7d0e0915dc1bf83a783c813e75a";
 const QWEN_27B_REPO = process.env.LLAMACPP_QWEN_27B_REPO ?? "froggeric/Qwen3.6-27B-MTP-GGUF";
 const QWEN_27B_REVISION = process.env.LLAMACPP_QWEN_27B_REVISION ?? "431204640c8511573e61a7964a12cc452114a223";
+const GEMMA4_31B_REPO = process.env.LLAMACPP_GEMMA4_31B_REPO ?? "unsloth/gemma-4-31B-it-GGUF";
+const GEMMA4_31B_REVISION = process.env.LLAMACPP_GEMMA4_31B_REVISION ?? "main";
 const DEFAULT_CTX_SIZE = Number(process.env.LLAMACPP_CTX_SIZE ?? 262144);
 const DEFAULT_MAX_TOKENS = Number(process.env.LLAMACPP_MAX_TOKENS ?? 65536);
 
@@ -117,6 +119,12 @@ type ManagedModel = {
 	filename: string;
 	size: number;
 	sha256: string;
+	// Whether to attach an MTP speculative drafter at server startup.
+	// Defaults to true (Qwen 3.6 MTP-GGUFs ship with drafter weights).
+	// Set to false for models whose GGUFs don't contain MTP tensors
+	// (e.g. stock Gemma 4 31B — the Gemma 4 assistant drafter uses a
+	// custom architecture not yet in mainline llama.cpp).
+	mtp?: boolean;
 };
 
 const MODELS: ManagedModel[] = [
@@ -185,6 +193,42 @@ const MODELS: ManagedModel[] = [
 		filename: "Qwen3.6-27B-Q8_0-mtp.gguf",
 		size: 29_047_086_752,
 		sha256: "15de87dd41f9a05c2b8938c4a7234280a5b148f2ac047b7f80abca548a768b2f",
+	},
+	{
+		id: "gemma-4-31b-2bit",
+		name: "gemma-4-31b-2bit",
+		repo: GEMMA4_31B_REPO,
+		revision: GEMMA4_31B_REVISION,
+		quant: "q2",
+		bits: 2,
+		filename: "gemma-4-31B-it-UD-Q2_K_XL.gguf",
+		size: 11_774_989_312,
+		sha256: "356c2560612c04a6fb367262675a96098ea59648cbc1d3b8fbb971aac5cbe397",
+		mtp: false,
+	},
+	{
+		id: "gemma-4-31b-4bit",
+		name: "gemma-4-31b-4bit",
+		repo: GEMMA4_31B_REPO,
+		revision: GEMMA4_31B_REVISION,
+		quant: "q4",
+		bits: 4,
+		filename: "gemma-4-31B-it-UD-Q4_K_XL.gguf",
+		size: 18_822_968_320,
+		sha256: "dd69c1566b0d559f303424e2b00e830837bb6c8b25e5baa08c75f11709bd41db",
+		mtp: false,
+	},
+	{
+		id: "gemma-4-31b-8bit",
+		name: "gemma-4-31b-8bit",
+		repo: GEMMA4_31B_REPO,
+		revision: GEMMA4_31B_REVISION,
+		quant: "q8",
+		bits: 8,
+		filename: "gemma-4-31B-it-UD-Q8_K_XL.gguf",
+		size: 35_020_039_168,
+		sha256: "e2ad55395f36af91f1779f2aceecb0f7dcefde52a4fc680f29205d671f5e1569",
+		mtp: false,
 	},
 ];
 
@@ -1355,7 +1399,11 @@ function serverArgs(model: ManagedModel, modelFile: string, port: number): strin
 	];
 
 	const mtpSetting = process.env.LLAMACPP_ENABLE_MTP?.toLowerCase();
-	const enableMtp = mtpSetting !== "0" && mtpSetting !== "false" && mtpSetting !== "no";
+	const envAllowsMtp = mtpSetting !== "0" && mtpSetting !== "false" && mtpSetting !== "no";
+	// Per-model gate: GGUFs without MTP tensors (e.g. Gemma 4 31B) set mtp: false
+	// to suppress --spec-type mtp; otherwise default to enabled.
+	const modelAllowsMtp = model.mtp ?? true;
+	const enableMtp = envAllowsMtp && modelAllowsMtp;
 
 	const parallel = process.env.LLAMACPP_PARALLEL;
 	if (parallel) args.push("--parallel", parallel);
@@ -1713,6 +1761,14 @@ function applyLlamaCppPayloadDefaults(payload: unknown, reasoningEnabled: boolea
 }
 
 function streamLlamaCpp(model: Model<any>, context: Context, options?: SimpleStreamOptions) {
+	// pi >=0.74 routes ALL streamSimple registrations as the global handler for the
+	// matching `api` (see pi's model-registry.js::applyProviderConfig). That means
+	// non-llamacpp openai-completions models (custom providers in models.json,
+	// other extensions, etc.) end up calling this function. Defer those to the
+	// stock openai-completions streamer instead of throwing "Unknown llama.cpp model".
+	if (model.provider !== PROVIDER_ID) {
+		return streamOpenAICompletions(model as Model<"openai-completions">, context, options as any);
+	}
 	const stream = createLocalAssistantMessageEventStream();
 	void (async () => {
 		try {
