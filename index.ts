@@ -64,6 +64,12 @@ const QWEN_27B_REPO = process.env.LLAMACPP_QWEN_27B_REPO ?? "froggeric/Qwen3.6-2
 const QWEN_27B_REVISION = process.env.LLAMACPP_QWEN_27B_REVISION ?? "431204640c8511573e61a7964a12cc452114a223";
 const GEMMA4_31B_REPO = process.env.LLAMACPP_GEMMA4_31B_REPO ?? "unsloth/gemma-4-31B-it-GGUF";
 const GEMMA4_31B_REVISION = process.env.LLAMACPP_GEMMA4_31B_REVISION ?? "main";
+// Ornith-1.0-35B (deepreinforce-ai) — standard GGUF fine-tune, no MTP drafter tensors.
+// Revision is pinned to the HF `main` SHA because the model entry hardcodes the file
+// size; if upstream `main` moves the Q8_0 could change size and fail the check.
+const ORNITH_35B_REPO = process.env.LLAMACPP_ORNITH_35B_REPO ?? "deepreinforce-ai/Ornith-1.0-35B-GGUF";
+const ORNITH_35B_REVISION =
+	process.env.LLAMACPP_ORNITH_35B_REVISION ?? "c2e1703039380de4ce6820e97afd185682d3c16c";
 const DEFAULT_CTX_SIZE = Number(process.env.LLAMACPP_CTX_SIZE ?? 262144);
 const DEFAULT_MAX_TOKENS = Number(process.env.LLAMACPP_MAX_TOKENS ?? 65536);
 
@@ -228,6 +234,19 @@ const MODELS: ManagedModel[] = [
 		filename: "gemma-4-31B-it-UD-Q8_K_XL.gguf",
 		size: 35_020_039_168,
 		sha256: "e2ad55395f36af91f1779f2aceecb0f7dcefde52a4fc680f29205d671f5e1569",
+		mtp: false,
+	},
+	{
+		id: "ornith-1.0-35b-8bit",
+		name: "ornith-1.0-35b-8bit",
+		repo: ORNITH_35B_REPO,
+		revision: ORNITH_35B_REVISION,
+		quant: "q8",
+		bits: 8,
+		filename: "ornith-1.0-35b-Q8_0.gguf",
+		size: 36_903_138_880,
+		sha256: "cbc992bca07901c1a51f33e65e6fc5d687de179c852a772dfd15e4c3261dbf5c",
+		// No MTP drafter tensors in this GGUF; keep --spec-type mtp off.
 		mtp: false,
 	},
 ];
