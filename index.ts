@@ -131,6 +131,11 @@ type ManagedModel = {
 	// (e.g. stock Gemma 4 31B — the Gemma 4 assistant drafter uses a
 	// custom architecture not yet in mainline llama.cpp).
 	mtp?: boolean;
+	// Per-model llama-server launch defaults. Environment variables still
+	// override/extend these, so LLAMACPP_CTX_SIZE etc. remain available as fallbacks.
+	ctxSize?: number;
+	gpuLayers?: number | string;
+	serverArgs?: string[];
 };
 
 const MODELS: ManagedModel[] = [
@@ -238,7 +243,7 @@ const MODELS: ManagedModel[] = [
 	},
 	{
 		id: "ornith-1.0-35b-8bit",
-		name: "ornith-1.0-35b-8bit",
+		name: "Ornith 1.0 35B Q8_0 (160k ctx, q8 KV)",
 		repo: ORNITH_35B_REPO,
 		revision: ORNITH_35B_REVISION,
 		quant: "q8",
@@ -248,6 +253,30 @@ const MODELS: ManagedModel[] = [
 		sha256: "cbc992bca07901c1a51f33e65e6fc5d687de179c852a772dfd15e4c3261dbf5c",
 		// No MTP drafter tensors in this GGUF; keep --spec-type mtp off.
 		mtp: false,
+		// Launch defaults baked into the model selector entry, so it runs without
+		// any LLAMACPP_* env vars. Flags not handled by the base serverArgs()
+		// builder go here; --ctx-size/--n-gpu-layers/--jinja are set separately.
+		ctxSize: 160_000,
+		gpuLayers: 999,
+		serverArgs: [
+			"-fa",
+			"on",
+			"--swa-full",
+			"--no-mmap",
+			"--cache-type-k",
+			"q8_0",
+			"--cache-type-v",
+			"q8_0",
+			"--batch-size",
+			"2048",
+			"--ubatch-size",
+			"2048",
+			"--threads",
+			"20",
+			"--mlock",
+			"--prio",
+			"2",
+		],
 	},
 ];
 
@@ -1398,6 +1427,12 @@ async function writeAdoptedServerStateLocked(pid: number, model: ManagedModel, b
 	await appendLog(`\n[${new Date().toISOString()}] adopted existing llama-server pid=${pid} model=${model.id}\n`);
 }
 
+// Resolve the context window for a model: env wins over the per-model default
+// so a lighter fallback (e.g. LLAMACPP_CTX_SIZE=65536) can still override it.
+function ctxSizeForModel(model: ManagedModel): number {
+	return Number(process.env.LLAMACPP_CTX_SIZE ?? model.ctxSize ?? DEFAULT_CTX_SIZE);
+}
+
 function serverArgs(model: ManagedModel, modelFile: string, port: number): string[] {
 	const args = [
 		"--host",
@@ -1409,7 +1444,7 @@ function serverArgs(model: ManagedModel, modelFile: string, port: number): strin
 		"-a",
 		model.id,
 		"--ctx-size",
-		String(DEFAULT_CTX_SIZE),
+		String(ctxSizeForModel(model)),
 		"--jinja",
 		"--reasoning-format",
 		"deepseek",
@@ -1428,13 +1463,17 @@ function serverArgs(model: ManagedModel, modelFile: string, port: number): strin
 	if (parallel) args.push("--parallel", parallel);
 	else if (enableMtp) args.push("--parallel", "1");
 
-	const gpuLayers = process.env.LLAMACPP_GPU_LAYERS;
-	if (gpuLayers) args.push("--n-gpu-layers", gpuLayers);
+	const gpuLayers = process.env.LLAMACPP_GPU_LAYERS ?? model.gpuLayers;
+	if (gpuLayers) args.push("--n-gpu-layers", String(gpuLayers));
 
 	if (enableMtp) args.push("--spec-type", "mtp", "--spec-draft-n-max", process.env.LLAMACPP_MTP_DRAFT_N_MAX ?? "3");
 
+	// Per-model baked-in flags first (e.g. Ornith's --mlock/--swa-full/--cache-type),
+	// then any LLAMACPP_SERVER_ARGS env override appended last.
+	if (model.serverArgs?.length) args.push(...model.serverArgs);
+
 	const extra = process.env.LLAMACPP_SERVER_ARGS;
-	if (extra) args.push(...extra.split(/\s+/).filter(Boolean));
+	if (extra) args.push(...splitArgs(extra));
 
 	return args;
 }
@@ -1856,7 +1895,7 @@ function registerLlamaCppProvider(pi: ExtensionAPI): void {
 				xhigh: null,
 			},
 			input: ["text"],
-			contextWindow: DEFAULT_CTX_SIZE,
+			contextWindow: ctxSizeForModel(model),
 			maxTokens: DEFAULT_MAX_TOKENS,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		})),
